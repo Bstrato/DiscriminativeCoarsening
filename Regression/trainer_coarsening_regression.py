@@ -22,13 +22,11 @@ class GradientAccumulationRegressionTrainer:
         self.save_dir = save_dir
         self.huber_delta = huber_delta
 
-        # Create save directory
         os.makedirs(save_dir, exist_ok=True)
 
         print(f"Using Huber Loss with delta={huber_delta}")
         print(f"Using gradient accumulation with {accumulation_steps} steps")
 
-        # Prepare edge weight dict if available
         self.edge_weight_dict = {}
         for edge_type in data.edge_types:
             if hasattr(data[edge_type], 'edge_weight'):
@@ -61,33 +59,27 @@ class GradientAccumulationRegressionTrainer:
         self.model.train()
         total_loss = 0
 
-        # Get training indices
         train_mask = self.data['stay'].train_mask
         train_indices = torch.where(train_mask)[0]
 
-        # Shuffle and split into mini-batches
         perm = torch.randperm(len(train_indices))
         train_indices = train_indices[perm]
 
         batch_size = len(train_indices) // self.accumulation_steps
 
         for step in range(self.accumulation_steps):
-            # Get batch indices
             start_idx = step * batch_size
             end_idx = start_idx + batch_size if step < self.accumulation_steps - 1 else len(train_indices)
             batch_indices = train_indices[start_idx:end_idx]
 
-            # Forward pass on full graph (required for GNNs)
             aggressive_memory_cleanup()
 
             predictions = self.model(self.data.x_dict, self.data.edge_index_dict,
                                    self.edge_weight_dict if self.edge_weight_dict else None)
 
-            # Calculate loss only on current batch
             batch_predictions = predictions[batch_indices]
             batch_targets = self.data['stay'].y_continuous[batch_indices]
 
-            # Filter out any remaining non-finite values
             finite_mask = torch.isfinite(batch_predictions) & torch.isfinite(batch_targets)
             if finite_mask.sum() == 0:
                 print(f"Warning: No finite values in batch {step}")
@@ -97,27 +89,20 @@ class GradientAccumulationRegressionTrainer:
             batch_targets = batch_targets[finite_mask]
 
             loss = criterion(batch_predictions, batch_targets)
-
-            # Scale loss by accumulation steps
             loss = loss / self.accumulation_steps
 
-            # Backward pass
             loss.backward()
-
             total_loss += loss.item()
 
-            # Clean up
             del predictions, batch_predictions, batch_targets, loss
             aggressive_memory_cleanup()
 
-        # Check gradients BEFORE clearing them
         total_grad_norm = 0
         for p in self.model.parameters():
             if p.grad is not None:
                 total_grad_norm += p.grad.data.norm(2).item() ** 2
         total_grad_norm = total_grad_norm ** 0.5
 
-        # Update parameters after accumulating gradients
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         optimizer.step()
         optimizer.zero_grad()
@@ -138,7 +123,6 @@ class GradientAccumulationRegressionTrainer:
             y_true = self.data['stay'].y_continuous[mask].cpu().numpy()
             y_pred = predictions[mask].cpu().numpy()
 
-            # Filter out non-finite values
             finite_mask = np.isfinite(y_true) & np.isfinite(y_pred)
             if finite_mask.sum() == 0:
                 print(f"Error: No finite values for {mask_name} evaluation")
@@ -154,15 +138,11 @@ class GradientAccumulationRegressionTrainer:
             y_true_clean = y_true[finite_mask]
             y_pred_clean = y_pred[finite_mask]
 
-            # Calculate regression metrics
             mae = mean_absolute_error(y_true_clean, y_pred_clean)
             rmse = np.sqrt(mean_squared_error(y_true_clean, y_pred_clean))
             r2 = r2_score(y_true_clean, y_pred_clean)
-
-            # MAPE (Mean Absolute Percentage Error) - handle division by zero
             mape = np.mean(np.abs((y_true_clean - y_pred_clean) / np.maximum(y_true_clean, 1e-8))) * 100
 
-            # Detailed analysis if requested
             if detailed:
                 detailed_regression_analysis(y_true_clean, y_pred_clean, mask_name.title())
 
@@ -196,13 +176,9 @@ class GradientAccumulationRegressionTrainer:
         monitor_memory()
 
         for epoch in range(epochs):
-            # Train with gradient accumulation
             train_loss, grad_norm = self.train_epoch_with_accumulation(optimizer, criterion)
-
-            # Compute validation loss for overfitting detection
             val_loss = compute_validation_loss(self.model, self.data, criterion, self.edge_weight_dict)
 
-            # Evaluate with detailed analysis every visualize_every epochs
             detailed = (epoch + 1) % visualize_every == 0
             val_metrics = self.evaluate('val', detailed=detailed)
 
@@ -210,19 +186,15 @@ class GradientAccumulationRegressionTrainer:
                   f"Val MAE: {val_metrics['mae']:.3f} | Val RMSE: {val_metrics['rmse']:.3f} | "
                   f"Val R²: {val_metrics['r2']:.3f}")
 
-            # Training diagnostics - now with correct gradient info
             if (epoch + 1) % visualize_every == 0:
                 print(f"  Grad norm: {grad_norm:.6f}")
 
-                # Weight statistics for key layers
                 for name, param in self.model.named_parameters():
                     if 'regressor' in name and 'weight' in name:
                         print(f"  {name} - Mean: {param.data.mean().item():.6f}, Std: {param.data.std().item():.6f}")
 
-            # Embedding analysis
             analyze_embeddings(self.model, self.data, epoch, self.edge_weight_dict)
 
-            # Track best model and early stopping
             if val_metrics['mae'] < best_val_mae:
                 best_val_mae = val_metrics['mae']
                 torch.save(self.model.state_dict(), os.path.join(self.save_dir, 'best_model_regression_coarsened.pth'))
@@ -232,10 +204,9 @@ class GradientAccumulationRegressionTrainer:
 
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
-            elif val_loss > best_val_loss * 1.1 and epoch > 20:  # 10% increase in val loss
+            elif val_loss > best_val_loss * 1.1 and epoch > 20:
                 print(f"  WARNING: Validation loss increasing - potential overfitting!")
 
-            # Early stopping
             if patience_counter >= patience:
                 print(f"Early stopping triggered after {epoch + 1} epochs")
                 break
@@ -243,7 +214,6 @@ class GradientAccumulationRegressionTrainer:
             if epoch % 10 == 0:
                 monitor_memory()
 
-        # Load best model and evaluate on test set
         best_model_path = os.path.join(self.save_dir, 'best_model_regression_coarsened.pth')
         self.model.load_state_dict(torch.load(best_model_path))
         test_metrics = self.evaluate('test', detailed=True)
@@ -263,8 +233,6 @@ def detailed_regression_analysis(y_true, y_pred, split_name="Validation"):
     """Analyze regression performance by LOS ranges"""
     print(f"  {split_name} Regression Analysis:")
 
-    # Overall metrics already calculated, now analyze by ranges
-    # Performance by LOS ranges
     short_mask = y_true <= 3.0
     medium_mask = (y_true > 3.0) & (y_true <= 7.0)
     long_mask = y_true > 7.0
@@ -291,7 +259,6 @@ def compute_validation_loss(model, data, criterion, edge_weight_dict=None):
         val_targets = data['stay'].y_continuous[val_mask]
         val_preds = predictions[val_mask]
 
-        # Handle potential NaN/inf in predictions
         finite_mask = torch.isfinite(val_targets) & torch.isfinite(val_preds)
         if finite_mask.sum() == 0:
             return float('inf')
@@ -305,11 +272,9 @@ def analyze_embeddings(model, data, epoch, edge_weight_dict=None):
     if epoch % 20 == 0:
         model.eval()
         with torch.no_grad():
-            # Get stay embeddings after input projection
             stay_embeddings = model.input_projections['stay'](data['stay'].x)
             print(f"  Stay embedding - Mean: {stay_embeddings.mean():.4f}, Std: {stay_embeddings.std():.4f}")
 
-            # Get final predictions statistics
             predictions = model(data.x_dict, data.edge_index_dict, edge_weight_dict)
             finite_preds = predictions[torch.isfinite(predictions)]
             if len(finite_preds) > 0:

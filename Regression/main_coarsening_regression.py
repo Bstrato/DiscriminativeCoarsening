@@ -45,7 +45,6 @@ def parse_arguments():
         formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
 
-    # Model Architecture Arguments
     parser.add_argument('--model', type=str, default='hgt',
                         choices=['memory_efficient', 'han', 'hgt'],
                         help='GNN architecture to use')
@@ -56,13 +55,11 @@ def parse_arguments():
     parser.add_argument('--dropout', type=float, default=0.2,
                         help='Dropout rate for regularization')
 
-    # Model-specific Arguments
     parser.add_argument('--heads', type=int, default=2,
                         help='Number of attention heads for HAN model')
     parser.add_argument('--num_heads', type=int, default=2,
                         help='Number of attention heads for HGT model')
 
-    # Training Arguments
     parser.add_argument('--epochs', type=int, default=30,
                         help='Number of training epochs')
     parser.add_argument('--lr', type=float, default=0.005,
@@ -78,14 +75,12 @@ def parse_arguments():
     parser.add_argument('--visualize_every', type=int, default=10,
                         help='Visualization frequency during training')
 
-    # Data Arguments
     parser.add_argument('--data_path', type=str,
                         default=r"/nfs/hpc/share/bayitaas/stra/GNN/MIMIC_GraphCoarsening/GraphCreation_Code",
                         help='Path to data directory')
     parser.add_argument('--regression_file', type=str, default="regression_los_clinical_safe.pt",
                         help='Regression data file name')
 
-    # Coarsening Arguments
     parser.add_argument('--coarsen_types', nargs='+', default=['careunit', 'inputevent'],
                         help='Node types to coarsen')
     parser.add_argument('--pq_m', type=int, default=8,
@@ -95,13 +90,11 @@ def parse_arguments():
     parser.add_argument('--random_state', type=int, default=42,
                         help='Random state for reproducibility')
 
-    # Data Splits
     parser.add_argument('--train_ratio', type=float, default=0.7,
                         help='Training data ratio')
     parser.add_argument('--val_ratio', type=float, default=0.15,
                         help='Validation data ratio')
 
-    # Experiment Control
     parser.add_argument('--run_ablation', action='store_true',
                         help='Run ablation study after main experiment')
     parser.add_argument('--run_baseline', action='store_true',
@@ -113,7 +106,7 @@ def parse_arguments():
 
 
 def handle_nan_targets(los_values):
-    """Handle NaN values in LOS targets robustly"""
+    """Handle NaN values in LOS targets"""
     print("\n" + "=" * 50)
     print("LOS TARGET CLEANING")
     print("=" * 50)
@@ -126,10 +119,9 @@ def handle_nan_targets(los_values):
 
     if nan_count > 0:
         if nan_count == original_count:
-            print("❌ ERROR: All values are NaN!")
+            print("ERROR: All values are NaN!")
             return None
 
-        # Calculate median of valid values
         valid_mask = ~torch.isnan(los_values)
         valid_values = los_values[valid_mask]
         median_los = valid_values.median().item()
@@ -141,13 +133,12 @@ def handle_nan_targets(los_values):
         print(f"  Std: {valid_values.std():.3f} days")
         print(f"  Range: {valid_values.min():.3f} - {valid_values.max():.3f} days")
 
-        # Fill NaN with median
         cleaned_values = torch.where(torch.isnan(los_values), median_los, los_values)
-        print(f"✅ Filled {nan_count:,} NaN values with median: {median_los:.3f} days")
+        print(f"Filled {nan_count:,} NaN values with median: {median_los:.3f} days")
 
         return cleaned_values
     else:
-        print("✅ No NaN values found")
+        print("No NaN values found")
         return los_values
 
 
@@ -163,7 +154,6 @@ def analyze_los_targets(y_continuous):
     print(f"LOS Max: {y_continuous.max():.4f} days")
     print(f"LOS Median: {y_continuous.median():.4f} days")
 
-    # Percentiles
     percentiles = [25, 75, 90, 95, 99]
     for p in percentiles:
         val = torch.quantile(y_continuous, p / 100.0)
@@ -171,7 +161,6 @@ def analyze_los_targets(y_continuous):
 
     print(f"NaN count: {torch.isnan(y_continuous).sum()}")
 
-    # Distribution analysis
     print(f"\nLOS Distribution:")
     short_mask = y_continuous <= 3.0
     medium_mask = (y_continuous > 3.0) & (y_continuous <= 7.0)
@@ -183,7 +172,7 @@ def analyze_los_targets(y_continuous):
 
 
 def print_experiment_summary(args):
-    """Print a comprehensive summary of the experiment configuration"""
+    """Print experiment configuration summary"""
     print("=" * 80)
     print("EXPERIMENT CONFIGURATION SUMMARY")
     print("=" * 80)
@@ -227,17 +216,13 @@ def main(args):
     """Main function with selective coarsening for regression"""
     print("=== Medical GNN with Selective Graph Coarsening - REGRESSION ===")
 
-    # Print experiment configuration
     print_experiment_summary(args)
 
-    # Setup environment
     device = setup_cuda_environment()
     monitor_memory()
 
-    # Data path
     regression_file = os.path.join(args.data_path, args.regression_file)
 
-    # Load original data
     original_data = load_data_safely(regression_file)
     if original_data is None:
         return
@@ -247,22 +232,18 @@ def main(args):
     print(f"Node types: {list(original_data.x_dict.keys())}")
     print(f"Edge types: {list(original_data.edge_index_dict.keys())}")
 
-    # Handle NaN values in continuous LOS targets
     y_continuous = handle_nan_targets(original_data['stay'].y)
     if y_continuous is None:
-        print("❌ Cannot proceed with all-NaN targets")
+        print("Cannot proceed with all-NaN targets")
         return
 
     original_data['stay'].y_continuous = y_continuous
 
-    # Analyze cleaned LOS targets
     analyze_los_targets(y_continuous)
 
-    # Analyze original node features
     print(f"\nOriginal Data Analysis:")
     analyze_node_features(original_data)
 
-    # Apply selective coarsening
     print(f"\nApplying selective coarsening...")
     coarsened_data, coarsening_info = apply_selective_coarsening(
         original_data,
@@ -272,20 +253,15 @@ def main(args):
         random_state=args.random_state
     )
 
-    # Transfer the y_continuous to coarsened data
     coarsened_data['stay'].y_continuous = original_data['stay'].y_continuous
 
-    # Compare original vs coarsened
     compare_with_baseline(original_data, coarsened_data, coarsening_info)
 
-    # Analyze coarsened node features
     print(f"\nCoarsened Data Analysis:")
     analyze_node_features(coarsened_data)
 
-    # Metadata for coarsened graph
     metadata = (list(coarsened_data.x_dict.keys()), list(coarsened_data.edge_index_dict.keys()))
 
-    # Generate save directory if not provided
     if args.save_dir is None:
         args.save_dir = f"./results_regression_coarsening_{args.model}_{args.hidden_dim}_{args.num_layers}"
 
@@ -294,22 +270,19 @@ def main(args):
 
     aggressive_memory_cleanup()
 
-    # Create model for coarsened graph with command line arguments
     model = create_regression_model(
         model_name=args.model,
         metadata=metadata,
         hidden_dim=args.hidden_dim,
         num_layers=args.num_layers,
         dropout=args.dropout,
-        heads=args.heads,  # For HAN model
-        num_heads=args.num_heads  # For HGT model
+        heads=args.heads,
+        num_heads=args.num_heads
     )
 
-    # Move coarsened data to GPU
     print("Moving coarsened data to GPU...")
     coarsened_data_gpu = coarsened_data.to(device)
 
-    # Initialize model
     model.to(device)
     with torch.no_grad():
         model.eval()
@@ -320,7 +293,6 @@ def main(args):
 
     monitor_memory()
 
-    # Train and evaluate on coarsened graph
     trainer = GradientAccumulationRegressionTrainer(
         model, coarsened_data_gpu, coarsening_info, device,
         accumulation_steps=args.accumulation_steps,
@@ -339,14 +311,13 @@ def main(args):
     )
     test_metrics = results['test_metrics']
 
-    print(f"\n🏆 Final Results ({args.model.upper()} Model with Selective Coarsening):")
+    print(f"\nFinal Results ({args.model.upper()} Model with Selective Coarsening):")
     print(f"MAE: {test_metrics['mae']:.3f} days")
     print(f"RMSE: {test_metrics['rmse']:.3f} days")
     print(f"R²: {test_metrics['r2']:.3f}")
     print(f"MAPE: {test_metrics['mape']:.1f}%")
 
-    # Print coarsening impact summary
-    print(f"\n📊 Coarsening Impact Summary:")
+    print(f"\nCoarsening Impact Summary:")
     total_original_nodes = sum(info['original_count'] for info in coarsening_info.values())
     total_coarsened_nodes = sum(info['coarsened_count'] for info in coarsening_info.values())
     total_reduction = (1 - total_coarsened_nodes / total_original_nodes) * 100
@@ -358,7 +329,6 @@ def main(args):
             info = coarsening_info[node_type]
             print(f"{node_type.title()} nodes coarsened: {info['original_count']} -> {info['coarsened_count']}")
 
-    # Cleanup
     del model, trainer, coarsened_data_gpu, original_data, coarsened_data
     aggressive_memory_cleanup()
 
@@ -371,26 +341,21 @@ def run_ablation_study(args):
     print(f"ABLATION STUDY: Different Coarsening Parameters - {args.model.upper()} MODEL")
     print(f"{'=' * 60}")
 
-    # Setup environment
     device = setup_cuda_environment()
 
-    # Data path
     regression_file = os.path.join(args.data_path, args.regression_file)
 
-    # Load original data once
     original_data = load_data_safely(regression_file)
     if original_data is None:
         return
 
-    # Handle NaN values in continuous LOS targets
     y_continuous = handle_nan_targets(original_data['stay'].y)
     if y_continuous is None:
-        print("❌ Cannot proceed with all-NaN targets")
+        print("Cannot proceed with all-NaN targets")
         return
 
     original_data['stay'].y_continuous = y_continuous
 
-    # Different parameter combinations to test
     param_combinations = [
         {'m': 4, 'k': 8, 'name': 'Conservative'},
         {'m': 8, 'k': 16, 'name': 'Moderate'},
@@ -404,7 +369,6 @@ def run_ablation_study(args):
         print(f"Testing {params['name']} coarsening (m={params['m']}, k={params['k']}) with {args.model.upper()} model")
         print(f"{'=' * 40}")
 
-        # Apply coarsening with current parameters
         coarsened_data, coarsening_info = apply_selective_coarsening(
             original_data,
             coarsen_node_types=args.coarsen_types,
@@ -413,10 +377,8 @@ def run_ablation_study(args):
             random_state=args.random_state
         )
 
-        # Transfer the y_continuous to coarsened data
         coarsened_data['stay'].y_continuous = original_data['stay'].y_continuous
 
-        # Quick training (fewer epochs for ablation)
         metadata = (list(coarsened_data.x_dict.keys()), list(coarsened_data.edge_index_dict.keys()))
         model = create_regression_model(
             model_name=args.model,
@@ -439,11 +401,9 @@ def run_ablation_study(args):
         )
         trainer.create_data_splits(train_ratio=args.train_ratio, val_ratio=args.val_ratio)
 
-        training_results = trainer.train(epochs=25, lr=args.lr,
-                                         weight_decay=args.weight_decay)  # Fewer epochs for ablation
+        training_results = trainer.train(epochs=25, lr=args.lr, weight_decay=args.weight_decay)
         test_metrics = training_results['test_metrics']
 
-        # Store results
         total_nodes = sum(info['coarsened_count'] for info in coarsening_info.values())
         total_reduction = (1 - total_nodes / sum(info['original_count'] for info in coarsening_info.values())) * 100
 
@@ -458,11 +418,9 @@ def run_ablation_study(args):
             'node_reduction': total_reduction
         })
 
-        # Cleanup
         del model, trainer, coarsened_data_gpu, coarsened_data
         aggressive_memory_cleanup()
 
-    # Print ablation results
     print(f"\n{'=' * 80}")
     print(f"ABLATION STUDY RESULTS - {args.model.upper()} MODEL")
     print(f"{'=' * 80}")
@@ -474,7 +432,6 @@ def run_ablation_study(args):
               f"{result['mae']:<6.3f} {result['rmse']:<6.3f} "
               f"{result['r2']:<6.3f} {result['mape']:<6.1f} {result['node_reduction']:<9.1f}%")
 
-    # Find best performing configuration
     best_mae = min(results, key=lambda x: x['mae'])
     best_r2 = max(results, key=lambda x: x['r2'])
     print(f"\nBest MAE Performance: {best_mae['name']} (MAE: {best_mae['mae']:.3f} days)")
@@ -490,26 +447,21 @@ def run_baseline_comparison(args):
     print(f"BASELINE COMPARISON: Coarsened vs Non-Coarsened - {args.model.upper()} MODEL")
     print(f"{'=' * 60}")
 
-    # Setup environment
     device = setup_cuda_environment()
 
-    # Data path
     regression_file = os.path.join(args.data_path, args.regression_file)
 
-    # Load original data
     original_data = load_data_safely(regression_file)
     if original_data is None:
         return
 
-    # Handle NaN values
     y_continuous = handle_nan_targets(original_data['stay'].y)
     if y_continuous is None:
-        print("❌ Cannot proceed with all-NaN targets")
+        print("Cannot proceed with all-NaN targets")
         return
 
     original_data['stay'].y_continuous = y_continuous
 
-    # Train baseline (non-coarsened) model
     print(f"\n{'=' * 40}")
     print(f"Training BASELINE (Non-Coarsened) {args.model.upper()} Model")
     print(f"{'=' * 40}")
@@ -542,11 +494,9 @@ def run_baseline_comparison(args):
     print(f"  RMSE: {baseline_metrics['rmse']:.3f} days")
     print(f"  R²: {baseline_metrics['r2']:.3f}")
 
-    # Cleanup baseline
     del model_baseline, trainer_baseline, original_data_gpu
     aggressive_memory_cleanup()
 
-    # Train coarsened model
     print(f"\n{'=' * 40}")
     print(f"Training COARSENED {args.model.upper()} Model")
     print(f"{'=' * 40}")
@@ -586,7 +536,6 @@ def run_baseline_comparison(args):
     print(f"  RMSE: {coarsened_metrics['rmse']:.3f} days")
     print(f"  R²: {coarsened_metrics['r2']:.3f}")
 
-    # Comparison summary
     print(f"\n{'=' * 60}")
     print(f"COMPARISON SUMMARY - {args.model.upper()} MODEL")
     print(f"{'=' * 60}")
@@ -603,7 +552,6 @@ def run_baseline_comparison(args):
         f"{'RMSE (days)':<15} {baseline_metrics['rmse']:<12.3f} {coarsened_metrics['rmse']:<12.3f} {rmse_improvement:<12.2f}%")
     print(f"{'R²':<15} {baseline_metrics['r2']:<12.3f} {coarsened_metrics['r2']:<12.3f} {r2_improvement:<12.2f}%")
 
-    # Node reduction summary
     total_original_nodes = sum(info['original_count'] for info in coarsening_info.values())
     total_coarsened_nodes = sum(info['coarsened_count'] for info in coarsening_info.values())
     total_reduction = (1 - total_coarsened_nodes / total_original_nodes) * 100
@@ -616,7 +564,6 @@ def run_baseline_comparison(args):
         print(
             f"Performance Trade-off: {abs(mae_improvement):.2f}% MAE degradation for {total_reduction:.1f}% memory savings")
 
-    # Cleanup
     del model_coarsened, trainer_coarsened, coarsened_data_gpu, original_data, coarsened_data
     aggressive_memory_cleanup()
 
@@ -631,27 +578,23 @@ def run_baseline_comparison(args):
 
 
 if __name__ == "__main__":
-    # Parse command line arguments
     args = parse_arguments()
 
-    # Run main experiment
     print("Starting main regression experiment with graph coarsening...")
     test_metrics, coarsening_info = main(args)
 
-    # Run additional experiments based on command line flags
     ablation_results = None
     comparison_results = None
 
     if args.run_ablation:
-        print(f"\n🔬 Running Ablation Study with {args.model.upper()} model...")
+        print(f"\nRunning Ablation Study with {args.model.upper()} model...")
         ablation_results = run_ablation_study(args)
 
     if args.run_baseline:
-        print(f"\n📊 Running Baseline Comparison with {args.model.upper()} model...")
+        print(f"\nRunning Baseline Comparison with {args.model.upper()} model...")
         comparison_results = run_baseline_comparison(args)
 
-    # Final summary
-    print(f"\n✅ All experiments completed successfully!")
+    print(f"\nAll experiments completed successfully!")
     print(f"Model Used: {args.model.upper()}")
     print(f"Main Results saved in: {args.save_dir}")
 
@@ -661,14 +604,13 @@ if __name__ == "__main__":
         print(
             f"Baseline comparison saved in: ./baseline_regression_{args.model}_*/ and ./coarsened_regression_{args.model}_*/")
 
-    print(f"\n🎯 Final {args.model.upper()} Model Performance:")
+    print(f"\nFinal {args.model.upper()} Model Performance:")
     print(f"  MAE: {test_metrics['mae']:.3f} days")
     print(f"  RMSE: {test_metrics['rmse']:.3f} days")
     print(f"  R²: {test_metrics['r2']:.3f}")
     print(f"  MAPE: {test_metrics['mape']:.1f}%")
 
-    # Print usage examples for future runs
-    print(f"\n💡 Usage Examples:")
+    print(f"\nUsage Examples:")
     print(f"# Run with Memory Efficient GNN:")
     print(f"python main_coarsening_regression.py --model memory_efficient --hidden_dim 64 --num_layers 2")
     print(f"")

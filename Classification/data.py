@@ -5,10 +5,10 @@ import os
 
 
 def load_data_safely(filepath):
-    """Load data safely with multiple fallback methods"""
+    """Load data with fallback methods"""
     try:
         data = torch.load(filepath, map_location='cpu', weights_only=False)
-        print("✅ Data loaded successfully")
+        print("Data loaded successfully")
         return data
     except Exception as e1:
         try:
@@ -16,15 +16,15 @@ def load_data_safely(filepath):
             from torch_geometric.data import HeteroData, Data
             torch.serialization.add_safe_globals([BaseStorage, HeteroData, Data])
             data = torch.load(filepath, map_location='cpu', weights_only=True)
-            print("✅ Data loaded with safe globals")
+            print("Data loaded with safe globals")
             return data
         except Exception as e2:
-            print(f"❌ Loading failed: {e1}, {e2}")
+            print(f"Loading failed: {e1}, {e2}")
             return None
 
 
 def analyze_node_features(data):
-    """Analyze the actual node features"""
+    """Analyze node features"""
     print("\n" + "=" * 50)
     print("NODE FEATURE ANALYSIS")
     print("=" * 50)
@@ -64,7 +64,7 @@ def create_data_splits(data, device, train_ratio=0.7, val_ratio=0.15):
 
 
 def get_class_weights(data, device, num_classes=3):
-    """Calculate class weights for handling imbalanced data"""
+    """Calculate class weights for imbalanced data"""
     y = data['stay'].y.cpu().numpy()
     class_counts = np.bincount(y)
     total_samples = len(y)

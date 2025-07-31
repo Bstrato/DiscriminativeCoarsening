@@ -21,11 +21,6 @@ from torch_geometric.datasets import DBLP, IMDB
 from sklearn.metrics import f1_score
 import prettytable as pt
 
-
-# ============================================================================
-# UTILITY FUNCTIONS (from utils.py)
-# ============================================================================
-
 def asymmetric_gcn_norm(adj_t):
     """Normalize adjacency matrix for heterogeneous graphs."""
     if isinstance(adj_t, SparseTensor):
@@ -118,10 +113,6 @@ def evalue_model(model, x_dict, adj_t_dict, y, test_mask):
     return acc, f1_micro, f1_macro
 
 
-# ============================================================================
-# HeteroSAGE MODEL (from HeteroSAGE.py)
-# ============================================================================
-
 def reset_adj_t_dict_to_mean(adj_t_dict):
     """Convert adjacency matrices to mean aggregation format."""
     adj_t_dict_mean = {}
@@ -198,10 +189,6 @@ class HeteroSAGE(torch.nn.Module):
             return target_logits
 
 
-# ============================================================================
-# DATA LOADING (from utils_data.py)
-# ============================================================================
-
 def get_DBLP(root):
     """Load DBLP dataset."""
     dataset = DBLP(root + '/DBLP', transform=T.ToSparseTensor(remove_edge_index=False))
@@ -236,10 +223,6 @@ def get_data(name, root='./datahetero'):
     else:
         raise NotImplementedError
 
-
-# ============================================================================
-# GRAPH CONDENSATION CORE (from graphsyn.py)
-# ============================================================================
 
 def match_loss(gw_syns, gw_reals):
     """Compute matching loss between synthetic and real gradients."""
@@ -349,7 +332,6 @@ def cluster_initialize(data, num_syn_dict, model_name, architecture, opt_paramet
 
         torch.save((cluster_dict, cluster_adi_dict, cluster_y_count), file_path)
 
-    # Get initialization information from cluster information
     x_initial_dict = {}
     for node_type in data.node_types:
         clusters = cluster_dict[node_type]
@@ -386,13 +368,11 @@ class GraphSynthesizer(nn.Module):
         self.edge_types = data.edge_types
         self.num_classes = data.num_classes
 
-        # Calculate number of synthetic nodes per type
         self.num_syn_dict = {}
         for node_type, x in data.x_dict.items():
             num_syn = max(int(x.shape[0] * cond_rate), 1)
             self.num_syn_dict[node_type] = num_syn
 
-        # Initialize synthetic graph
         if feat_init == 'cluster':
             architecture = {'hidden_channels': 64, 'num_layers': 3}
             opt_parameter = {'epochs': 100, 'lr': 0.005, 'weight_decay': 0.001}
@@ -409,14 +389,12 @@ class GraphSynthesizer(nn.Module):
         self.indices_dict = {k: v.to(self.device) for k, v in indices_dict.items()}
         self.y_syn, self.mask_syn = y_syn.to(self.device), mask_syn.to(self.device)
 
-        # Create trainable synthetic node features
         self.x_syn_dict = {}
         for node_type, x in data.x_dict.items():
             num_syn = self.num_syn_dict[node_type]
             self.x_syn_dict[node_type] = nn.Parameter(torch.FloatTensor(num_syn, x.shape[1]).to(self.device))
             self.x_syn_dict[node_type].data.copy_(self.x_initial_dict[node_type])
 
-        # Create trainable edge weights if specified
         if self.edge_hidden_channels is not None:
             self.edge_mlp_dict = {}
             for edge_type in data.edge_types:
@@ -518,24 +496,13 @@ class Orth_Initializer:
         return init_list
 
 
-# ============================================================================
-# MAIN CONDENSATION FUNCTION (from graphsyn.py)
-# ============================================================================
-
 def hgcond(data, cond_rate, feat_init, para_init, basicmodel, model_architecture, cond_train):
-    """
-    Main HGCond function for heterogeneous graph condensation.
-
-    JUSTIFICATION: This is the exact function from graphsyn.py that performs
-    graph condensation with HeteroSAGE model.
-    """
-    # Get data info
+    """Main HGCond function for heterogeneous graph condensation."""
     target_node_type, num_classes = data.target_node_type, data.num_classes
     node_types, edge_types = data.node_types, data.edge_types
     x_dict, adj_t_dict, y = data.x_dict, data.adj_t_dict, data[target_node_type].y
     train_mask = data[target_node_type].train_mask
 
-    # Create basic model - using HeteroSAGE since that's what we have
     basic_model = HeteroSAGE(**model_architecture,
                              out_channels=num_classes,
                              node_types=node_types,
@@ -546,7 +513,6 @@ def hgcond(data, cond_rate, feat_init, para_init, basicmodel, model_architecture
     if para_init == 'orth':
         orth_initi = Orth_Initializer(basic_model)
 
-    # GraphSynthesizer
     graphsyner = GraphSynthesizer(data, cond_rate, feat_init, edge_hidden_channels=64)
     y_syn = graphsyner.y_syn
     mask_syn = graphsyner.mask_syn
@@ -554,7 +520,6 @@ def hgcond(data, cond_rate, feat_init, para_init, basicmodel, model_architecture
                                       lr=cond_train['lr'])
     parameters = related_parameters(basic_model, x_dict, adj_t_dict, y, train_mask)
 
-    # Condensation stage
     losses_log = []
     smallest_loss = 99999.
     for initial_i in tqdm(range(cond_train['epochs_initial']),
@@ -566,26 +531,22 @@ def hgcond(data, cond_rate, feat_init, para_init, basicmodel, model_architecture
         optimizer_basic_model = torch.optim.Adam(basic_model.parameters(),
                                                  lr=cond_train['lr_basic_model'])
 
-        # Alternating optimization
         loss_avg = 0
         for step_syn in range(cond_train['epochs_deep']):
-            basic_model.eval()  # fix basic_model while optimizing graphsyner
+            basic_model.eval()
 
             x_syn_dict = graphsyner.get_x_syn_dict()
             adj_t_syn_dict = graphsyner.get_adj_t_syn_dict()
 
-            # Compute gradient on real data
             output = basic_model(x_dict, adj_t_dict)
             loss_real = F.nll_loss(output[train_mask], y[train_mask])
             gw_reals = torch.autograd.grad(loss_real, parameters)
             gw_reals = list((_.detach().clone() for _ in gw_reals))
 
-            # Compute gradient on synthetic data
             output_syn = basic_model(x_syn_dict, adj_t_syn_dict)[mask_syn]
             loss_syn = F.nll_loss(output_syn, y_syn[mask_syn])
             gw_syns = torch.autograd.grad(loss_syn, parameters, create_graph=True)
 
-            # Gradient matching loss
             loss = match_loss(gw_syns, gw_reals)
             optimizer_cond.zero_grad()
             loss.backward()
@@ -593,7 +554,6 @@ def hgcond(data, cond_rate, feat_init, para_init, basicmodel, model_architecture
 
             loss_avg += loss.item() / cond_train['epochs_deep']
 
-            # Train model on synthetic data (except last step)
             if step_syn < cond_train['epochs_deep'] - 1:
                 x_syn_dict = graphsyner.get_x_syn_detached_dict()
                 adj_t_syn_dict = graphsyner.get_adj_t_syn_detached_dict()
@@ -609,18 +569,9 @@ def hgcond(data, cond_rate, feat_init, para_init, basicmodel, model_architecture
     return graphsyner, losses_log
 
 
-# ============================================================================
-# EVALUATION FUNCTION (from graphsyn.py)
-# ============================================================================
-
 def evalue_hgcond(num_evalue, data, x_syn_dict, adj_t_syn_dict, y_syn, mask_syn,
                   model_name, model_architecture, model_train, loss_fn=F.cross_entropy):
-    """
-    Evaluate condensed graph performance.
-
-    JUSTIFICATION: This is the exact evaluation function from graphsyn.py
-    that tests how well the condensed graph trains GNNs.
-    """
+    """Evaluate condensed graph performance."""
     node_types = data.node_types
     edge_types = data.edge_types
     target_node_type, num_classes = data.target_node_type, data.num_classes
@@ -684,50 +635,35 @@ def evalue_hgcond(num_evalue, data, x_syn_dict, adj_t_syn_dict, y_syn, mask_syn,
     return accs, f1_micros, f1_macros
 
 
-# ============================================================================
-# MAIN EXECUTION SCRIPT
-# ============================================================================
-
 def main():
-    """
-    Main execution function for HGCond with HeteroSAGE on IMDB and DBLP.
-
-    JUSTIFICATION: This combines all the extracted components to perform
-    the complete graph condensation pipeline exactly as shown in the code.
-    """
-    # Configuration
+    """Main execution function for HGCond with HeteroSAGE on IMDB and DBLP."""
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-    # Model architecture for HeteroSAGE
     model_architecture = {
         'hidden_channels': 64,
         'num_layers': 2,
         'alpha': 0.1
     }
 
-    # Condensation training configuration
     cond_train = {
-        'epochs_initial': 20,  # From the code: range(cond_train['epochs_initial'])
-        'epochs_deep': 10,  # From the code: range(cond_train['epochs_deep'])
-        'lr': 0.01,  # From the code: lr=cond_train['lr']
-        'lr_basic_model': 0.01,  # From the code: lr=cond_train['lr_basic_model']
-        'epochs_basic_model': 5  # From train_model function
+        'epochs_initial': 20,
+        'epochs_deep': 10,
+        'lr': 0.01,
+        'lr_basic_model': 0.01,
+        'epochs_basic_model': 5
     }
 
-    # Evaluation configuration
     model_train = {
         'epochs': 1000,
         'lr': 0.01
     }
 
-    # Dataset names from utils_data.py
     datasets = ['dblp', 'imdb']
     condensation_rates = [0.001, 0.005, 0.01]
 
     for dataset_name in datasets:
         print(f"\n=== Processing {dataset_name.upper()} Dataset ===")
 
-        # Load data using exact functions from utils_data.py
         data = get_data(dataset_name, root='./datahetero')
         data = data.to(device)
 
@@ -739,45 +675,40 @@ def main():
         for cond_rate in condensation_rates:
             print(f"\n--- Condensation Rate: {cond_rate} ---")
 
-            # Perform graph condensation using exact function from graphsyn.py
             graphsyner, losses_log = hgcond(
                 data=data,
                 cond_rate=cond_rate,
-                feat_init='cluster',  # From GraphSynthesizer options
-                para_init='orth',  # From the code: if para_init=='orth'
-                basicmodel='HeteroSAGE',  # Using HeteroSAGE as specified
+                feat_init='cluster',
+                para_init='orth',
+                basicmodel='HeteroSAGE',
                 model_architecture=model_architecture,
                 cond_train=cond_train
             )
 
             print(f"Condensation completed. Final loss: {losses_log[-1]:.4f}")
 
-            # Get best condensed graph
             best_x_syn = graphsyner.best_x_syn_dict
             best_adj_syn = graphsyner.best_adj_t_syn_dict
 
-            # Print condensed graph statistics
             print(f"Condensed graph info:")
             for node_type, x_syn in best_x_syn.items():
                 original_size = data.x_dict[node_type].shape[0]
                 condensed_size = x_syn.shape[0]
                 print(f"  {node_type}: {original_size} -> {condensed_size} nodes")
 
-            # Evaluate condensed graph using exact function from graphsyn.py
             print("Evaluating condensed graph...")
             accs, f1_micros, f1_macros = evalue_hgcond(
-                num_evalue=3,  # Number of evaluation runs
+                num_evalue=3,
                 data=data,
                 x_syn_dict=best_x_syn,
                 adj_t_syn_dict=best_adj_syn,
                 y_syn=graphsyner.y_syn,
                 mask_syn=graphsyner.mask_syn,
-                model_name='HeteroSAGE',  # Using HeteroSAGE for evaluation
+                model_name='HeteroSAGE',
                 model_architecture=model_architecture,
                 model_train=model_train
             )
 
-            # Print results
             acc_mean, acc_std = torch.tensor(accs).mean().item(), torch.tensor(accs).std().item()
             f1_micro_mean = torch.tensor(f1_micros).mean().item()
             f1_macro_mean = torch.tensor(f1_macros).mean().item()
@@ -790,4 +721,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

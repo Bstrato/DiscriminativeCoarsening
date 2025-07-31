@@ -1,22 +1,7 @@
 #!/usr/bin/env python3
 """
 Medical GNN Classification - Main Training Script
-
-This script provides a comprehensive framework for training and evaluating
-Graph Neural Networks on medical heterogeneous graph data for length-of-stay prediction.
-
-Features:
-- Multiple model architectures (Memory-efficient GNN, RGCN, HAN, HGT)
-- Comprehensive evaluation metrics (Accuracy, F1, Jaccard, AUPRC, AUROC, Cohen's Kappa)
-- Advanced training with gradient accumulation and early stopping
-- Visualization including t-SNE embeddings
-- Memory-efficient data handling
-- Detailed logging and result saving
-
-Usage:
-    python main.py --config config.yaml
-    python main.py --model memory_efficient --epochs 50 --lr 0.001
-    python main.py --compare_models --models memory_efficient rgcn han hgt
+Training and evaluating Graph Neural Networks on medical heterogeneous graph data.
 """
 
 import argparse
@@ -26,7 +11,6 @@ import torch
 import warnings
 from datetime import datetime
 
-# Import our modules
 from data import load_data_safely, analyze_node_features, create_data_splits, get_class_weights
 from models import get_model_class, create_model, MODEL_REGISTRY
 from trainer import GradientAccumulationTrainer, ModelEvaluator
@@ -42,22 +26,18 @@ class Config:
     """Configuration management for the training pipeline"""
 
     def __init__(self, config_dict=None):
-        # Default configuration
         self.data_path = "/nfs/hpc/share/bayitaas/stra/GNN/MIMIC_GraphCoarsening/GraphCreation_Code"
         self.classification_file = "classification_los_clinical_safe.pt"
 
-        # Model configuration
-        self.model_type = "memory_efficient"  # memory_efficient, rgcn, han, hgt
+        self.model_type = "memory_efficient"
         self.hidden_dim = 64
         self.num_layers = 2
         self.num_classes = 3
         self.dropout = 0.2
 
-        # Model-specific parameters
-        self.heads = 2  # For HAN
-        self.num_heads = 2  # For HGT
+        self.heads = 2
+        self.num_heads = 2
 
-        # Training configuration
         self.epochs = 50
         self.learning_rate = 0.001
         self.weight_decay = 1e-4
@@ -65,22 +45,18 @@ class Config:
         self.patience = 10
         self.use_scheduler = True
 
-        # Data configuration
         self.train_ratio = 0.7
         self.val_ratio = 0.15
         self.normalize_features = True
         self.augment_data = False
 
-        # Evaluation configuration
         self.visualize_every = 10
         self.class_names = ['Short Stay', 'Medium Stay', 'Long Stay']
 
-        # Output configuration
         self.save_dir = f"./results_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         self.save_model = True
         self.create_visualizations = True
 
-        # Update with provided config
         if config_dict:
             self.__dict__.update(config_dict)
 
@@ -102,43 +78,35 @@ def setup_experiment(config):
     """Setup experiment directory and logging"""
     os.makedirs(config.save_dir, exist_ok=True)
 
-    # Save configuration
     config_path = os.path.join(config.save_dir, 'config.yaml')
     config.save_config(config_path)
 
-    print(f"🔬 Experiment setup complete")
-    print(f"   Results directory: {config.save_dir}")
-    print(f"   Configuration saved: {config_path}")
+    print(f"Experiment setup complete")
+    print(f"Results directory: {config.save_dir}")
+    print(f"Configuration saved: {config_path}")
 
     return config.save_dir
 
 
 def load_and_preprocess_data(config, device):
     """Load and preprocess the dataset"""
-    print("📂 Loading and preprocessing data...")
+    print("Loading and preprocessing data...")
 
-    # Construct file path
     classification_file = os.path.join(config.data_path, config.classification_file)
 
-    # Load data
     data = load_data_safely(classification_file)
     if data is None:
         raise RuntimeError("Failed to load data")
 
-    # Analyze data
     analyze_node_features(data)
-
-    # Create data splits
     create_data_splits(data, device, config.train_ratio, config.val_ratio)
 
-    # Move to device
     print(f"Moving data to {device}...")
     data = data.to(device)
 
-    # Get metadata
     metadata = (list(data.x_dict.keys()), list(data.edge_index_dict.keys()))
 
-    print("✅ Data loading and preprocessing complete")
+    print("Data loading and preprocessing complete")
     print(f"Stay nodes: {data['stay'].x.size(0):,}")
     print(f"Node types: {metadata[0]}")
     print(f"Edge types: {metadata[1]}")
@@ -149,9 +117,8 @@ def load_and_preprocess_data(config, device):
 
 def create_and_initialize_model(config, metadata, data, device):
     """Create and initialize the model"""
-    print(f"🧠 Creating {config.model_type.upper()} model...")
+    print(f"Creating {config.model_type.upper()} model...")
 
-    # Create model using factory function
     model = create_model(
         model_name=config.model_type,
         metadata=metadata,
@@ -159,31 +126,29 @@ def create_and_initialize_model(config, metadata, data, device):
         num_layers=config.num_layers,
         num_classes=config.num_classes,
         dropout=config.dropout,
-        heads=config.heads,  # For HAN
-        num_heads=config.num_heads  # For HGT
+        heads=config.heads,
+        num_heads=config.num_heads
     )
 
     model.to(device)
 
-    # Initialize model with dummy forward pass to resolve lazy modules
-    print("🔄 Initializing model parameters...")
+    print("Initializing model parameters...")
     model.eval()
     with torch.no_grad():
         try:
             _ = model(data.x_dict, data.edge_index_dict)
-            print("✅ Model parameters initialized successfully")
+            print("Model parameters initialized successfully")
         except Exception as e:
-            print(f"⚠️ Warning during initialization: {e}")
+            print(f"Warning during initialization: {e}")
 
-    # Now we can safely count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 
-    print(f"   Model architecture: {config.model_type.upper()}")
-    print(f"   Total parameters: {total_params:,}")
-    print(f"   Trainable parameters: {trainable_params:,}")
-    print(f"   Hidden dimension: {config.hidden_dim}")
-    print(f"   Number of layers: {config.num_layers}")
+    print(f"Model architecture: {config.model_type.upper()}")
+    print(f"Total parameters: {total_params:,}")
+    print(f"Trainable parameters: {trainable_params:,}")
+    print(f"Hidden dimension: {config.hidden_dim}")
+    print(f"Number of layers: {config.num_layers}")
 
     monitor_memory()
     return model
@@ -191,9 +156,8 @@ def create_and_initialize_model(config, metadata, data, device):
 
 def train_model(config, model, data, device):
     """Train the model with comprehensive evaluation"""
-    print("🚀 Starting model training...")
+    print("Starting model training...")
 
-    # Create trainer
     trainer = GradientAccumulationTrainer(
         model=model,
         data=data,
@@ -204,7 +168,6 @@ def train_model(config, model, data, device):
         save_dir=config.save_dir
     )
 
-    # Train with comprehensive evaluation
     results = trainer.train(
         epochs=config.epochs,
         lr=config.learning_rate,
@@ -219,18 +182,17 @@ def train_model(config, model, data, device):
 
 def run_comprehensive_model_comparison(config, data, metadata, device, models_to_compare=None):
     """Run comprehensive comparison between different model architectures"""
-    print("🔬 Running comprehensive model architecture comparison...")
+    print("Running comprehensive model architecture comparison...")
 
     if models_to_compare is None:
         models_to_compare = ['memory_efficient', 'rgcn', 'han', 'hgt']
 
-    # Validate model names
     valid_models = []
     for model_name in models_to_compare:
         if model_name in MODEL_REGISTRY:
             valid_models.append(model_name)
         else:
-            print(f"⚠️ Warning: Unknown model '{model_name}', skipping...")
+            print(f"Warning: Unknown model '{model_name}', skipping...")
 
     if not valid_models:
         raise ValueError("No valid models specified for comparison")
@@ -242,13 +204,11 @@ def run_comprehensive_model_comparison(config, data, metadata, device, models_to
         print(f"Training {model_name.upper()} model")
         print(f"{'=' * 70}")
 
-        # Create model-specific config
         temp_config = Config(config.__dict__.copy())
         temp_config.model_type = model_name
         temp_config.save_dir = os.path.join(config.save_dir, f"{model_name}_results")
 
         try:
-            # Create and train model
             model = create_and_initialize_model(temp_config, metadata, data, device)
             results = train_model(temp_config, model, data, device)
 
@@ -257,19 +217,17 @@ def run_comprehensive_model_comparison(config, data, metadata, device, models_to
                 'training_history': results['training_history']
             }
 
-            print(f"✅ {model_name.upper()} training completed successfully")
-            print(f"   Test F1: {results['test_metrics']['f1_macro']:.4f}")
-            print(f"   Test Accuracy: {results['test_metrics']['accuracy']:.4f}")
+            print(f"{model_name.upper()} training completed successfully")
+            print(f"Test F1: {results['test_metrics']['f1_macro']:.4f}")
+            print(f"Test Accuracy: {results['test_metrics']['accuracy']:.4f}")
 
         except Exception as e:
-            print(f"❌ {model_name.upper()} training failed: {str(e)}")
+            print(f"{model_name.upper()} training failed: {str(e)}")
             comparison_results[model_name] = {'error': str(e)}
 
-        # Cleanup
         del model
         aggressive_memory_cleanup()
 
-    # Create comprehensive comparison report
     create_model_comparison_report(comparison_results, config.save_dir)
 
     return comparison_results
@@ -281,21 +239,18 @@ def create_model_comparison_report(comparison_results, save_dir):
     print("COMPREHENSIVE MODEL ARCHITECTURE COMPARISON")
     print(f"{'=' * 80}")
 
-    # Filter out failed models
     successful_results = {name: results for name, results in comparison_results.items()
                           if 'error' not in results}
 
     if not successful_results:
-        print("❌ No models completed successfully")
+        print("No models completed successfully")
         return
 
-    # Metrics to compare
     metrics_to_compare = [
         'accuracy', 'f1_macro', 'f1_weighted', 'jaccard_macro',
         'cohen_kappa', 'auroc_macro', 'auprc_macro'
     ]
 
-    # Create comparison table
     print(f"\n{'Model':<15}", end="")
     for metric in metrics_to_compare:
         print(f"{metric:<12}", end="")
@@ -313,20 +268,17 @@ def create_model_comparison_report(comparison_results, save_dir):
             score = metrics.get(metric, 0)
             print(f"{score:<12.4f}", end="")
 
-            # Track best scores
             if score > best_scores[metric]:
                 best_scores[metric] = score
                 best_models[metric] = model_name
         print()
 
-    # Print best performing models
-    print(f"\n🏆 Best Performing Models:")
+    print(f"\nBest Performing Models:")
     for metric, model_name in best_models.items():
         if model_name:
             score = best_scores[metric]
-            print(f"   {metric:<15}: {model_name:<15} ({score:.4f})")
+            print(f"{metric:<15}: {model_name:<15} ({score:.4f})")
 
-    # Save detailed comparison to file
     comparison_file = os.path.join(save_dir, 'model_comparison_report.txt')
     with open(comparison_file, 'w') as f:
         f.write("COMPREHENSIVE MODEL ARCHITECTURE COMPARISON\n")
@@ -344,9 +296,8 @@ def create_model_comparison_report(comparison_results, save_dir):
             else:
                 f.write(f"  Error: {results.get('error', 'Unknown error')}\n\n")
 
-    print(f"\n📁 Detailed comparison report saved to: {comparison_file}")
+    print(f"\nDetailed comparison report saved to: {comparison_file}")
 
-    # Create comparison visualization
     create_model_comparison_visualization(successful_results, save_dir)
 
 
@@ -359,10 +310,9 @@ def create_model_comparison_visualization(comparison_results, save_dir):
     model_names = list(comparison_results.keys())
 
     if len(model_names) < 2:
-        print("⚠️ Need at least 2 models for comparison visualization")
+        print("Need at least 2 models for comparison visualization")
         return
 
-    # Prepare data for plotting
     scores = np.zeros((len(model_names), len(metrics_to_plot)))
 
     for i, model_name in enumerate(model_names):
@@ -370,7 +320,6 @@ def create_model_comparison_visualization(comparison_results, save_dir):
         for j, metric in enumerate(metrics_to_plot):
             scores[i, j] = metrics.get(metric, 0)
 
-    # Create grouped bar chart
     fig, ax = plt.subplots(figsize=(15, 8))
 
     x = np.arange(len(metrics_to_plot))
@@ -382,9 +331,8 @@ def create_model_comparison_visualization(comparison_results, save_dir):
         bars = ax.bar(x + offset, scores[i], width, label=model_name.upper(),
                       color=color, alpha=0.8)
 
-        # Add value labels on bars
         for bar, score in zip(bars, scores[i]):
-            if score > 0:  # Only label non-zero scores
+            if score > 0:
                 height = bar.get_height()
                 ax.text(bar.get_x() + bar.get_width() / 2., height + 0.01,
                         f'{score:.3f}', ha='center', va='bottom', fontsize=9)
@@ -403,14 +351,13 @@ def create_model_comparison_visualization(comparison_results, save_dir):
     plt.savefig(viz_path, dpi=300, bbox_inches='tight')
     plt.show()
 
-    print(f"📊 Model comparison visualization saved to: {viz_path}")
+    print(f"Model comparison visualization saved to: {viz_path}")
 
 
 def evaluate_existing_model(config, model_path, data, metadata, device):
     """Evaluate an existing trained model"""
-    print(f"📊 Evaluating existing model: {model_path}")
+    print(f"Evaluating existing model: {model_path}")
 
-    # Determine model type from path or use config
     model_type = config.model_type
 
     model_kwargs = {
@@ -423,7 +370,6 @@ def evaluate_existing_model(config, model_path, data, metadata, device):
         'num_heads': config.num_heads
     }
 
-    # Use evaluator
     evaluator = ModelEvaluator(
         model_path=model_path,
         data=data,
@@ -431,7 +377,6 @@ def evaluate_existing_model(config, model_path, data, metadata, device):
         class_names=config.class_names
     )
 
-    # Get the appropriate model class
     model_class = get_model_class(model_type)
     results = evaluator.load_and_evaluate(model_class, model_kwargs)
     return results
@@ -439,9 +384,8 @@ def evaluate_existing_model(config, model_path, data, metadata, device):
 
 def run_hyperparameter_search(config, data, metadata, device, model_name='memory_efficient'):
     """Run hyperparameter search for a specific model"""
-    print(f"🔍 Running hyperparameter search for {model_name.upper()}...")
+    print(f"Running hyperparameter search for {model_name.upper()}...")
 
-    # Define hyperparameter grid
     hp_grid = {
         'hidden_dim': [32, 64, 128],
         'num_layers': [2, 3, 4],
@@ -449,19 +393,16 @@ def run_hyperparameter_search(config, data, metadata, device, model_name='memory
         'learning_rate': [0.001, 0.005, 0.01]
     }
 
-    # Add model-specific hyperparameters
     if model_name in ['han', 'hgt']:
-        hp_grid['heads'] = [1, 2, 4]  # For HAN
-        hp_grid['num_heads'] = [1, 2, 4]  # For HGT
+        hp_grid['heads'] = [1, 2, 4]
+        hp_grid['num_heads'] = [1, 2, 4]
 
     best_score = 0
     best_config = None
     results_summary = []
 
-    # Simple grid search (you might want to use more sophisticated methods)
     import itertools
 
-    # Create combinations (limit to avoid too many combinations)
     key_combinations = [
         {'hidden_dim': 64, 'num_layers': 2, 'dropout': 0.2, 'learning_rate': 0.001},
         {'hidden_dim': 128, 'num_layers': 2, 'dropout': 0.2, 'learning_rate': 0.001},
@@ -471,17 +412,16 @@ def run_hyperparameter_search(config, data, metadata, device, model_name='memory
     ]
 
     for i, hp_combo in enumerate(key_combinations):
-        print(f"\n🔬 Hyperparameter combination {i + 1}/{len(key_combinations)}")
-        print(f"   {hp_combo}")
+        print(f"\nHyperparameter combination {i + 1}/{len(key_combinations)}")
+        print(f"{hp_combo}")
 
-        # Create config for this combination
         temp_config = Config(config.__dict__.copy())
         temp_config.model_type = model_name
         temp_config.hidden_dim = hp_combo['hidden_dim']
         temp_config.num_layers = hp_combo['num_layers']
         temp_config.dropout = hp_combo['dropout']
         temp_config.learning_rate = hp_combo['learning_rate']
-        temp_config.epochs = 20  # Reduced for hyperparameter search
+        temp_config.epochs = 20
         temp_config.save_dir = os.path.join(config.save_dir, f"hp_search_{model_name}_{i + 1}")
 
         if model_name in ['han', 'hgt']:
@@ -489,7 +429,6 @@ def run_hyperparameter_search(config, data, metadata, device, model_name='memory
             temp_config.num_heads = hp_combo.get('num_heads', 2)
 
         try:
-            # Train model with this configuration
             model = create_and_initialize_model(temp_config, metadata, data, device)
             results = train_model(temp_config, model, data, device)
 
@@ -504,21 +443,19 @@ def run_hyperparameter_search(config, data, metadata, device, model_name='memory
                 best_score = f1_score
                 best_config = hp_combo.copy()
 
-            print(f"   F1 Score: {f1_score:.4f}")
+            print(f"F1 Score: {f1_score:.4f}")
 
         except Exception as e:
-            print(f"   ❌ Failed: {str(e)}")
+            print(f"Failed: {str(e)}")
             results_summary.append({
                 'config': hp_combo,
                 'error': str(e)
             })
 
-        # Cleanup
         if 'model' in locals():
             del model
         aggressive_memory_cleanup()
 
-    # Save hyperparameter search results
     hp_results_file = os.path.join(config.save_dir, f'hyperparameter_search_{model_name}.txt')
     with open(hp_results_file, 'w') as f:
         f.write(f"HYPERPARAMETER SEARCH RESULTS - {model_name.upper()}\n")
@@ -536,10 +473,10 @@ def run_hyperparameter_search(config, data, metadata, device, model_name='memory
                 f.write(f"Error: {result['error']}\n")
             f.write("\n")
 
-    print(f"\n🏆 Best hyperparameters for {model_name.upper()}:")
-    print(f"   Configuration: {best_config}")
-    print(f"   F1 Score: {best_score:.4f}")
-    print(f"📁 Results saved to: {hp_results_file}")
+    print(f"\nBest hyperparameters for {model_name.upper()}:")
+    print(f"Configuration: {best_config}")
+    print(f"F1 Score: {best_score:.4f}")
+    print(f"Results saved to: {hp_results_file}")
 
     return best_config, best_score, results_summary
 
@@ -548,7 +485,6 @@ def main():
     """Main execution function"""
     parser = argparse.ArgumentParser(description='Medical GNN Training Pipeline')
 
-    # Configuration options
     parser.add_argument('--config', type=str, help='Path to configuration YAML file')
     parser.add_argument('--model', type=str, default='hgt',
                         choices=list(MODEL_REGISTRY.keys()),
@@ -561,7 +497,6 @@ def main():
     parser.add_argument('--heads', type=int, default=2, help='Number of attention heads (HAN)')
     parser.add_argument('--num_heads', type=int, default=2, help='Number of attention heads (HGT)')
 
-    # Execution modes
     parser.add_argument('--compare_models', action='store_true',
                         help='Compare different model architectures')
     parser.add_argument('--models', nargs='+', default=['memory_efficient', 'han', 'hgt'],
@@ -572,20 +507,17 @@ def main():
     parser.add_argument('--evaluate_model', type=str,
                         help='Path to trained model to evaluate')
 
-    # Output options
     parser.add_argument('--save_dir', type=str, help='Directory to save results')
     parser.add_argument('--no_visualizations', action='store_true',
                         help='Skip creating visualizations')
 
     args = parser.parse_args()
 
-    # Load configuration
     if args.config:
         config = Config.from_yaml(args.config)
     else:
         config = Config()
 
-    # Override config with command line arguments
     if args.model:
         config.model_type = args.model
     if args.epochs:
@@ -607,53 +539,44 @@ def main():
     if args.no_visualizations:
         config.create_visualizations = False
 
-    # Setup environment
-    print("🔧 Setting up environment...")
+    print("Setting up environment...")
     device = setup_cuda_environment()
 
-    # Setup experiment
     setup_experiment(config)
 
     try:
-        # Load and preprocess data
         data, metadata = load_and_preprocess_data(config, device)
 
         if args.evaluate_model:
-            # Evaluate existing model
             results = evaluate_existing_model(config, args.evaluate_model, data, metadata, device)
 
         elif args.compare_models:
-            # Compare different model architectures
             comparison_results = run_comprehensive_model_comparison(
                 config, data, metadata, device, args.models
             )
 
         elif args.hyperparameter_search:
-            # Run hyperparameter search
             best_config, best_score, search_results = run_hyperparameter_search(
                 config, data, metadata, device, config.model_type
             )
 
         else:
-            # Standard training
-            print(f"🎯 Training single model: {config.model_type.upper()}")
+            print(f"Training single model: {config.model_type.upper()}")
             model = create_and_initialize_model(config, metadata, data, device)
             results = train_model(config, model, data, device)
 
-            # Print final summary
-            print(f"\n🎉 Training completed successfully!")
-            print(f"📁 Results saved to: {config.save_dir}")
-            print(f"🏆 Best F1 Score: {results['test_metrics']['f1_macro']:.4f}")
-            print(f"🎯 Test Accuracy: {results['test_metrics']['accuracy']:.4f}")
+            print(f"\nTraining completed successfully!")
+            print(f"Results saved to: {config.save_dir}")
+            print(f"Best F1 Score: {results['test_metrics']['f1_macro']:.4f}")
+            print(f"Test Accuracy: {results['test_metrics']['accuracy']:.4f}")
 
     except Exception as e:
-        print(f"❌ Execution failed with error: {str(e)}")
+        print(f"Execution failed with error: {str(e)}")
         raise
 
     finally:
-        # Final cleanup
         aggressive_memory_cleanup()
-        print("🧹 Memory cleanup completed")
+        print("Memory cleanup completed")
 
 
 if __name__ == "__main__":
